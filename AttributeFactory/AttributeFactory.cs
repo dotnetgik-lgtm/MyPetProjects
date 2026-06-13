@@ -11,13 +11,37 @@ public class AttributeFactory<TProduct> where TProduct : class
     public AttributeFactory(IServiceProvider provider)
     {
         _provider = provider;
+        _registry = new Dictionary<string, Type>(StringComparer.OrdinalIgnoreCase);
 
-        _registry = AppDomain.CurrentDomain.GetAssemblies()
-            .SelectMany(a => a.GetTypes())
-            .Where(t => typeof(TProduct).IsAssignableFrom(t) && t.IsClass && !t.IsAbstract)
-            .Select(t => (type: t, attr: t.GetCustomAttribute<ProductKeyAttribute>()))
-            .Where(x => x.attr is not null)
-            .ToDictionary(x => x.attr!.Key, x => x.type);
+        var assemblies = AppDomain.CurrentDomain.GetAssemblies().Where(a => !a.IsDynamic);
+        foreach (var assembly in assemblies)
+        {
+            Type[] types;
+            try
+            {
+                types = assembly.GetTypes();
+            }
+            catch (ReflectionTypeLoadException ex)
+            {
+                types = ex.Types.Where(t => t is not null).ToArray()!;
+            }
+
+            foreach (var t in types)
+            {
+                if (t is null) continue;
+                if (!typeof(TProduct).IsAssignableFrom(t) || !t.IsClass || t.IsAbstract) continue;
+                var attr = t.GetCustomAttribute<ProductKeyAttribute>();
+                if (attr is null) continue;
+
+                var key = attr.Key;
+                if (_registry.TryGetValue(key, out var existing))
+                {
+                    throw new InvalidOperationException($"Duplicate product key '{key}' found on types '{existing.FullName}' and '{t.FullName}'.");
+                }
+
+                _registry[key] = t;
+            }
+        }
     }
 
     public TProduct Create(string key)
@@ -28,5 +52,5 @@ public class AttributeFactory<TProduct> where TProduct : class
         return (TProduct)_provider.GetRequiredService(type);
     }
 
-    public IEnumerable<string> RegisteredKeys => _registry.Keys;
+    public IReadOnlyCollection<string> RegisteredKeys => _registry.Keys.ToList().AsReadOnly();
 }

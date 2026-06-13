@@ -10,13 +10,35 @@ public static class ServiceCollectionExtensions
         ServiceLifetime lifetime = ServiceLifetime.Transient)
         where TProduct : class
     {
-        var implementations = AppDomain.CurrentDomain.GetAssemblies()
-            .SelectMany(a => a.GetTypes())
-            .Where(t => typeof(TProduct).IsAssignableFrom(t) && t.IsClass && !t.IsAbstract)
-            .Where(t => t.GetCustomAttribute<ProductKeyAttribute>() is not null);
+        var implementations = new List<Type>();
+        var assemblies = AppDomain.CurrentDomain.GetAssemblies().Where(a => !a.IsDynamic);
+
+        foreach (var assembly in assemblies)
+        {
+            Type[] types;
+            try
+            {
+                types = assembly.GetTypes();
+            }
+            catch (ReflectionTypeLoadException ex)
+            {
+                types = ex.Types.Where(t => t is not null).ToArray()!;
+            }
+
+            foreach (var t in types)
+            {
+                if (t is null) continue;
+                if (!typeof(TProduct).IsAssignableFrom(t) || !t.IsClass || t.IsAbstract) continue;
+                if (t.GetCustomAttribute<ProductKeyAttribute>() is null) continue;
+                implementations.Add(t);
+            }
+        }
 
         foreach (var type in implementations)
+        {
             services.Add(new ServiceDescriptor(type, type, lifetime));
+            services.Add(new ServiceDescriptor(typeof(TProduct), type, lifetime));
+        }
 
         services.AddSingleton<AttributeFactory<TProduct>>();
         return services;
